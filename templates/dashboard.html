@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 m-0">My items</h1>
+  <a class="btn btn-primary" href="{{ url_for('item_new') }}">+ New item</a>
+</div>
+
+<div class="row g-3 mb-3">
+  {% for s in statuses %}
+  <div class="col-4">
+    <a class="card stat-card text-decoration-none p-3 text-center {% if status == s %}border-primary{% endif %}"
+       href="{{ url_for('dashboard', status=s) }}">
+      <div class="fs-3 fw-bold">{{ counts[s] }}</div>
+      <div class="text-secondary text-capitalize small">{{ s }}</div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+<form class="row g-2 mb-3" method="get">
+  <div class="col-sm-7"><input class="form-control" name="q" value="{{ search }}" placeholder="Search title or description"></div>
+  <div class="col-7 col-sm-3">
+    <select class="form-select" name="status">
+      <option value="">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-5 col-sm-2 d-flex gap-2">
+    <button class="btn btn-outline-primary flex-fill">Filter</button>
+    {% if search or status %}<a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}" title="Clear">&times;</a>{% endif %}
+  </div>
+</form>
+
+{% if items %}
+  <div class="list-group">
+    {% for item in items %}
+    <div class="list-group-item py-3">
+      <div class="d-flex flex-wrap justify-content-between gap-2">
+        <div class="me-auto" style="min-width: 0;">
+          <div class="fw-semibold text-break">{{ item['title'] }}</div>
+          {% if item['description'] %}<div class="text-secondary small text-break item-desc">{{ item['description'] }}</div>{% endif %}
+          <div class="small mt-1">
+            <span class="badge status-{{ item['status'] }}">{{ item['status'] }}</span>
+            <span class="text-secondary ms-1">{{ item['created_at'] }}</span>
+          </div>
+        </div>
+        <div class="d-flex gap-2 align-items-start">
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('item_edit', item_id=item['id']) }}">Edit</a>
+          <form method="post" action="{{ url_for('item_delete', item_id=item['id']) }}" class="m-0"
+                onsubmit="return confirm('Delete this item?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="text-center text-secondary py-5 border rounded">
+    {% if search or status %}No items match your filter.{% else %}No items yet. Click <strong>+ New item</strong> to add your first one.{% endif %}
+  </div>
+{% endif %}
+{% endblock %}

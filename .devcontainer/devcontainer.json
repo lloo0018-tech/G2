@@ -1,0 +1,15 @@
+{
+  // Lets the project open in GitHub Codespaces (VS Code in your browser, nothing to install).
+  "name": "Student App",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "python -m pip install -r requirements-dev.txt",
+  "forwardPorts": [5000],
+  "portsAttributes": {
+    "5000": { "label": "Student App", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "GitHub.copilot"]
+    }
+  }
+}

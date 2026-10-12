@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero text-center py-5">
+  <h1 class="display-5 fw-bold mb-3">{{ app_name }}</h1>
+  <p class="lead text-secondary mb-4 mx-auto" style="max-width: 36rem;">
+    Keep track of your work in one place. Sign up, add items, and move them from
+    <strong>todo</strong> to <strong>done</strong>.
+  </p>
+  <a class="btn btn-primary btn-lg me-2 mb-2" href="{{ url_for('register') }}">Get started</a>
+  <a class="btn btn-outline-secondary btn-lg mb-2" href="{{ url_for('login') }}">I have an account</a>
+</section>
+
+<div class="row g-3 mt-2">
+  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Your own account</h2><p class="text-secondary mb-0">Passwords are stored safely as hashes, never as plain text.</p></div></div>
+  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Saved in a database</h2><p class="text-secondary mb-0">Everything is stored in SQLite, so it is still there tomorrow.</p></div></div>
+  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Search and filter</h2><p class="text-secondary mb-0">Find any item fast by word or by status.</p></div></div>
+</div>
+{% endblock %}
