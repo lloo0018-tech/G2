@@ -372,8 +372,9 @@ def create_app(test_config=None):
     app = Flask(
         __name__,
         root_path=BASE_DIR,
-        template_folder="templates",
-        static_folder="static",
+        template_folder=os.path.join(BASE_DIR, "templates"),
+        static_url_path="/static",
+        static_folder=os.path.join(BASE_DIR, "static"),
     )
     is_vercel = bool(os.environ.get("VERCEL"))
     app.config.update(
