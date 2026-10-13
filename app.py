@@ -302,11 +302,15 @@ def read_business_form():
 # ---------------------------------------------------------------------------
 def create_app(test_config=None):
     app = Flask(__name__)
+    is_vercel = bool(os.environ.get("VERCEL"))
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
         DATABASE=os.environ.get("DATABASE", os.path.join(BASE_DIR, "app.db")),
         APP_NAME=os.environ.get("APP_NAME", "CreditReady"),
-        UPLOAD_FOLDER=os.path.join(BASE_DIR, "instance", "private_uploads"),
+        UPLOAD_FOLDER=(
+            "/tmp" if is_vercel
+            else os.path.join(BASE_DIR, "instance", "private_uploads")
+        ),
         MAX_CONTENT_LENGTH=MAX_DOCUMENT_SIZE,
         CSRF_ENABLED=True,
         SESSION_COOKIE_HTTPONLY=True,
@@ -322,7 +326,8 @@ def create_app(test_config=None):
     db_folder = os.path.dirname(app.config["DATABASE"])
     if db_folder:
         os.makedirs(db_folder, exist_ok=True)
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    if not is_vercel:
+        os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
     app.teardown_appcontext(close_db)
     with app.app_context():
