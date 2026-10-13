@@ -369,7 +369,11 @@ def read_business_form():
 # The app
 # ---------------------------------------------------------------------------
 def create_app(test_config=None):
-    app = Flask(__name__)
+    app = Flask(
+        __name__,
+        template_folder=os.path.join(BASE_DIR, "templates"),
+        static_folder=os.path.join(BASE_DIR, "static"),
+    )
     is_vercel = bool(os.environ.get("VERCEL"))
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
