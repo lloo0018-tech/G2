@@ -371,8 +371,9 @@ def read_business_form():
 def create_app(test_config=None):
     app = Flask(
         __name__,
-        template_folder=os.path.join(BASE_DIR, "templates"),
-        static_folder=os.path.join(BASE_DIR, "static"),
+        root_path=BASE_DIR,
+        template_folder="templates",
+        static_folder="static",
     )
     is_vercel = bool(os.environ.get("VERCEL"))
     app.config.update(
