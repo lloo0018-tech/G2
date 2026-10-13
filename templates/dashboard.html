@@ -29,10 +29,22 @@
       <h2 class="h5 mb-1">Completeness estimate: {{ document_summary['overall_percentage'] }}%</h2>
       <p class="text-secondary small mb-0">Randomized demo values; uploaded file contents are not read or graded.</p>
     </div>
-    {% if business %}<a class="btn btn-primary" href="{{ url_for('document_new') }}">Upload a document</a>{% endif %}
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="score-ring{% if document_summary['overall_percentage'] >= 80 %} score-ring--good{% endif %}"
+           style="--score: {{ document_summary['overall_percentage'] }};"
+           role="img" aria-label="Document coverage estimate: {{ document_summary['overall_percentage'] }} percent">
+        <div class="score-ring-content">
+          <span class="score-ring-value">{{ document_summary['overall_percentage'] }}%</span>
+          <span class="score-ring-label">Coverage</span>
+        </div>
+      </div>
+      {% if business %}<a class="btn btn-primary" href="{{ url_for('document_new') }}">Upload a document</a>{% endif %}
+    </div>
   </div>
-  <div class="progress score-meter mb-3" role="progressbar" aria-label="Randomized document completeness estimate" aria-valuenow="{{ document_summary['overall_percentage'] }}" aria-valuemin="0" aria-valuemax="100">
-    <div class="progress-bar bg-success" style="width: {{ document_summary['overall_percentage'] }}%"></div>
+  <div class="progress score-meter{% if document_summary['overall_percentage'] >= 80 %} score-meter--good{% endif %} mb-3"
+       role="progressbar" aria-label="Randomized document completeness estimate"
+       aria-valuenow="{{ document_summary['overall_percentage'] }}" aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-bar" style="width: {{ document_summary['overall_percentage'] }}%"></div>
   </div>
   <div class="row g-2 border-top pt-3">
     {% for document_type in document_types %}

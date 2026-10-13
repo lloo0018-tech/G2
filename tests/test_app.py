@@ -138,6 +138,29 @@ def test_document_completeness_is_zero_without_uploads(client):
     assert b"uploaded file contents are not read or graded" in response.data
 
 
+@pytest.mark.parametrize(("percentage", "expect_good"), [(79, False), (80, True)])
+def test_dashboard_coverage_turns_green_at_80_percent(
+        client, monkeypatch, percentage, expect_good):
+    logged_in(client)
+    create_business_profile(client)
+    monkeypatch.setattr(
+        app_module,
+        "get_business_document_summary",
+        lambda _business_id: {
+            "overall_percentage": percentage,
+            "category_percentages": {
+                document_type: percentage for document_type in app_module.DOCUMENT_TYPES
+            },
+            "missing_types": [],
+        },
+    )
+
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert (b"score-ring--good" in response.data) is expect_good
+    assert (b"score-meter--good" in response.data) is expect_good
+
+
 def test_each_upload_gets_a_random_value_and_missing_categories_count_as_zero(client, app, monkeypatch):
     logged_in(client)
     create_business_profile(client)
