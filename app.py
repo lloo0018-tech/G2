@@ -142,10 +142,10 @@ class PostgresDatabase:
 def get_db():
     """Return one database connection per request (reused inside the request)."""
     if "db" not in g:
-        database_url = current_app.config["DATABASE_URL"]
-        if database_url:
+        db_url = current_app.config["DATABASE_URL"].strip()
+        if db_url:
             connection = psycopg.connect(
-                database_url,
+                db_url,
                 connect_timeout=5,
                 prepare_threshold=None,
                 row_factory=dict_row,
@@ -374,7 +374,7 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
         DATABASE=os.environ.get("DATABASE", os.path.join(BASE_DIR, "app.db")),
-        DATABASE_URL=os.environ.get("DATABASE_URL", ""),
+        DATABASE_URL=os.environ.get("DATABASE_URL", "").strip(),
         APP_NAME=os.environ.get("APP_NAME", "CreditReady"),
         UPLOAD_FOLDER=(
             "/tmp" if is_vercel
