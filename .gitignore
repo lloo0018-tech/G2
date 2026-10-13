@@ -9,6 +9,7 @@ venv/
 .env
 *.db
 data/
+instance/private_uploads/
 
 # Editors / OS
 .vscode/

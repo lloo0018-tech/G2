@@ -29,32 +29,77 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# The allowed values for an item's "status" column.
-STATUSES = ["todo", "doing", "done"]
+BUSINESS_TYPES = ["sole_proprietorship", "partnership", "private_limited", "other"]
+DOCUMENT_TYPES = [
+    "financial_statements",
+    "bank_statements",
+    "tax_documents",
+    "company_documents",
+    "financing_documents",
+    "business_documents",
+]
+DOCUMENT_EXTENSIONS = ("pdf", "png", "jpg", "jpeg")
+MAX_DOCUMENT_SIZE = 10 * 1024 * 1024
+APPLICATION_PREPARATION = [
+    "Gather the latest 6-12 months of signed financial statements, if available.",
+    "Gather 6-12 months of business bank statements for the same periods.",
+    "Prepare current business registration and ownership information.",
+    "List all current loans, balances, interest rates, and repayment dates.",
+    "Prepare a cash-flow forecast and note the assumptions behind it.",
+    "Check that names, dates, and amounts are consistent across documents.",
+]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE,
+    email         TEXT    NOT NULL UNIQUE,
+    name          TEXT    NOT NULL,
+    role          TEXT    NOT NULL DEFAULT 'sme',
+    account_status TEXT   NOT NULL DEFAULT 'active',
     password_hash TEXT    NOT NULL,
     created_at    TEXT    NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS items (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title       TEXT    NOT NULL,
-    description TEXT    NOT NULL DEFAULT '',
-    status      TEXT    NOT NULL DEFAULT 'todo',
-    created_at  TEXT    NOT NULL
+CREATE TABLE IF NOT EXISTS businesses (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id       INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    business_name       TEXT    NOT NULL,
+    registration_number TEXT    NOT NULL DEFAULT '',
+    business_type       TEXT    NOT NULL,
+    contact_email       TEXT    NOT NULL,
+    created_at          TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id       INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+    uploaded_by       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    original_name     TEXT    NOT NULL,
+    stored_name       TEXT    NOT NULL UNIQUE,
+    document_type     TEXT    NOT NULL,
+    completeness_percent INTEGER NOT NULL DEFAULT 0 CHECK (completeness_percent BETWEEN 0 AND 100),
+    processing_status TEXT    NOT NULL DEFAULT 'uploaded',
+    uploaded_at       TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS firm_clients (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    firm_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    business_id  INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+    status       TEXT    NOT NULL DEFAULT 'active',
+    created_at   TEXT    NOT NULL,
+    UNIQUE (firm_user_id, business_id)
 );
 """
 
@@ -81,6 +126,39 @@ def init_db():
     """Create the tables if they do not exist yet. Safe to run many times."""
     db = get_db()
     db.executescript(SCHEMA)
+    # Keep existing starter accounts usable while adding CreditReady account roles.
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+    if "email" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        db.execute("UPDATE users SET email = username WHERE email IS NULL")
+    if "name" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+        db.execute("UPDATE users SET name = username WHERE name = ''")
+    if "role" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'sme'")
+    if "account_status" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN account_status TEXT NOT NULL DEFAULT 'active'")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email)")
+    document_columns = {row["name"] for row in db.execute("PRAGMA table_info(documents)")}
+    if "completeness_percent" not in document_columns:
+        db.execute(
+            "ALTER TABLE documents ADD COLUMN completeness_percent INTEGER NOT NULL DEFAULT 0"
+        )
+        # Give existing uploads a one-time demonstration value during migration.
+        for document in db.execute("SELECT id FROM documents"):
+            db.execute(
+                "UPDATE documents SET completeness_percent = ? WHERE id = ?",
+                (secrets.randbelow(101), document["id"]),
+            )
+    for old_type, new_type in (
+        ("financial_statement", "financial_statements"),
+        ("bank_statement", "bank_statements"),
+        ("supporting_document", "business_documents"),
+    ):
+        db.execute(
+            "UPDATE documents SET document_type = ? WHERE document_type = ?",
+            (new_type, old_type),
+        )
     db.commit()
 
 
@@ -104,6 +182,19 @@ def login_required(view):
     return wrapped
 
 
+def sme_required(view):
+    """Limit the starter item's private pages to SME accounts."""
+
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if g.user["role"] != "sme":
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def csrf_token():
     """A secret per-session token that every form sends back (stops CSRF attacks)."""
     if "csrf_token" not in session:
@@ -111,31 +202,98 @@ def csrf_token():
     return session["csrf_token"]
 
 
-def get_own_item(item_id):
-    """Load an item that belongs to the logged-in user, or show a 404 page."""
-    item = get_db().execute(
-        "SELECT * FROM items WHERE id = ? AND user_id = ?", (item_id, g.user["id"])
+def get_own_business():
+    """Load only the business profile owned by the logged-in SME."""
+    return get_db().execute(
+        "SELECT * FROM businesses WHERE owner_user_id = ?", (g.user["id"],)
     ).fetchone()
-    if item is None:
+
+
+def get_own_document(document_id):
+    """Load a document only when its business belongs to the logged-in user."""
+    document = get_db().execute(
+        "SELECT documents.* FROM documents "
+        "JOIN businesses ON businesses.id = documents.business_id "
+        "WHERE documents.id = ? AND businesses.owner_user_id = ?",
+        (document_id, g.user["id"]),
+    ).fetchone()
+    if document is None:
         abort(404)
-    return item
+    return document
 
 
-def read_item_form():
-    """Read and check the item form. Returns (data, error_message_or_None)."""
-    data = {
-        "title": request.form.get("title", "").strip(),
-        "description": request.form.get("description", "").strip(),
-        "status": request.form.get("status", "todo"),
+def get_accessible_document(document_id):
+    """Load a document owned by the SME or shared with the logged-in firm."""
+    document = get_db().execute(
+        "SELECT documents.* FROM documents "
+        "JOIN businesses ON businesses.id = documents.business_id "
+        "WHERE documents.id = ? AND (businesses.owner_user_id = ? OR EXISTS ("
+        "SELECT 1 FROM firm_clients WHERE firm_clients.business_id = businesses.id "
+        "AND firm_clients.firm_user_id = ? AND firm_clients.status = 'active'))",
+        (document_id, g.user["id"], g.user["id"]),
+    ).fetchone()
+    if document is None:
+        abort(404)
+    return document
+
+
+def get_business_document_summary(business_id):
+    """Average upload values per category; categories without uploads count as zero."""
+    documents = get_db().execute(
+        "SELECT document_type, completeness_percent FROM documents WHERE business_id = ?",
+        (business_id,),
+    ).fetchall()
+    values_by_type = {document_type: [] for document_type in DOCUMENT_TYPES}
+    for document in documents:
+        values_by_type[document["document_type"]].append(document["completeness_percent"])
+
+    category_percentages = {}
+    for document_type in DOCUMENT_TYPES:
+        upload_values = values_by_type[document_type]
+        category_percentages[document_type] = (
+            round(sum(upload_values) / len(upload_values)) if upload_values else 0
+        )
+
+    return {
+        "overall_percentage": round(sum(category_percentages.values()) / len(DOCUMENT_TYPES)),
+        "category_percentages": category_percentages,
+        "missing_types": [
+            document_type for document_type in DOCUMENT_TYPES
+            if not values_by_type[document_type]
+        ],
     }
-    if not data["title"]:
-        return data, "Title is required."
-    if len(data["title"]) > 120:
-        return data, "Title must be 120 characters or less."
-    if len(data["description"]) > 2000:
-        return data, "Description must be 2000 characters or less."
-    if data["status"] not in STATUSES:
-        return data, "Pick a valid status."
+
+
+def has_allowed_file_signature(uploaded_file, extension):
+    """Check file content too, because a filename extension can be misleading."""
+    header = uploaded_file.stream.read(8)
+    uploaded_file.stream.seek(0)
+    if extension == "pdf":
+        return header.startswith(b"%PDF-")
+    if extension in ("jpg", "jpeg"):
+        return header.startswith(b"\xff\xd8\xff")
+    if extension == "png":
+        return header == b"\x89PNG\r\n\x1a\n"
+    return False
+
+
+def read_business_form():
+    """Read and validate business profile fields before they reach the database."""
+    data = {
+        "business_name": request.form.get("business_name", "").strip(),
+        "registration_number": request.form.get("registration_number", "").strip(),
+        "business_type": request.form.get("business_type", ""),
+        "contact_email": request.form.get("contact_email", "").strip().lower(),
+    }
+    if not 2 <= len(data["business_name"]) <= 120:
+        return data, "Business name must be 2-120 characters."
+    if len(data["registration_number"]) > 60:
+        return data, "Registration number must be 60 characters or less."
+    if data["business_type"] not in BUSINESS_TYPES:
+        return data, "Choose a valid business type."
+    email = data["contact_email"]
+    if len(email) > 254 or email.count("@") != 1 or email.startswith("@") or email.endswith("@") or " " in email:
+        return data, "Enter a valid business contact email."
     return data, None
 
 
@@ -147,7 +305,9 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
         DATABASE=os.environ.get("DATABASE", os.path.join(BASE_DIR, "app.db")),
-        APP_NAME=os.environ.get("APP_NAME", "Student App"),
+        APP_NAME=os.environ.get("APP_NAME", "CreditReady"),
+        UPLOAD_FOLDER=os.path.join(BASE_DIR, "instance", "private_uploads"),
+        MAX_CONTENT_LENGTH=MAX_DOCUMENT_SIZE,
         CSRF_ENABLED=True,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -162,6 +322,7 @@ def create_app(test_config=None):
     db_folder = os.path.dirname(app.config["DATABASE"])
     if db_folder:
         os.makedirs(db_folder, exist_ok=True)
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
     app.teardown_appcontext(close_db)
     with app.app_context():
@@ -173,7 +334,8 @@ def create_app(test_config=None):
         return {
             "app_name": app.config["APP_NAME"],
             "csrf_token": csrf_token,
-            "statuses": STATUSES,
+            "business_types": BUSINESS_TYPES,
+            "document_types": DOCUMENT_TYPES,
         }
 
     @app.before_request
@@ -182,8 +344,12 @@ def create_app(test_config=None):
         g.user = None
         if user_id is not None:
             g.user = get_db().execute(
-                "SELECT id, username FROM users WHERE id = ?", (user_id,)
+                "SELECT id, username, email, name, role, account_status FROM users WHERE id = ?",
+                (user_id,),
             ).fetchone()
+            if g.user is not None and g.user["account_status"] != "active":
+                session.clear()
+                g.user = None
 
         if request.method == "POST" and app.config["CSRF_ENABLED"]:
             sent = request.form.get("csrf_token", "")
@@ -200,24 +366,32 @@ def create_app(test_config=None):
     @app.route("/register", methods=["GET", "POST"])
     def register():
         if request.method == "POST":
-            username = request.form.get("username", "").strip()
+            name = request.form.get("name", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            role = request.form.get("role", "")
             password = request.form.get("password", "")
             error = None
-            if not 3 <= len(username) <= 30:
-                error = "Username must be 3-30 characters."
-            elif len(password) < 6:
-                error = "Password must be at least 6 characters."
+            if not 2 <= len(name) <= 80:
+                error = "Name must be 2-80 characters."
+            elif not 3 <= len(email) <= 254 or email.count("@") != 1:
+                error = "Enter a valid email address."
+            elif role not in ("sme", "firm"):
+                error = "Choose SME or accounting firm."
+            elif not 6 <= len(password) <= 128:
+                error = "Password must be 6-128 characters."
             else:
                 db = get_db()
                 try:
                     db.execute(
-                        "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                        "INSERT INTO users (username, email, name, role, password_hash, created_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?)",
                         # pbkdf2 works on every Python install (scrypt does not on macOS).
-                        (username, generate_password_hash(password, method="pbkdf2:sha256"), now()),
+                        (email, email, name, role,
+                         generate_password_hash(password, method="pbkdf2:sha256"), now()),
                     )
                     db.commit()
                 except sqlite3.IntegrityError:
-                    error = "That username is already taken."
+                    error = "An account with that email already exists."
             if error:
                 flash(error, "danger")
             else:
@@ -228,21 +402,26 @@ def create_app(test_config=None):
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
-            username = request.form.get("username", "").strip()
+            identifier = request.form.get("email", "").strip()
+            email = identifier.lower()
             password = request.form.get("password", "")
             user = get_db().execute(
-                "SELECT * FROM users WHERE username = ?", (username,)
+                "SELECT * FROM users WHERE email = ? OR lower(username) = ? LIMIT 1",
+                (email, email),
             ).fetchone()
-            if user is None or not check_password_hash(user["password_hash"], password):
+            if (user is None or user["account_status"] != "active"
+                    or not check_password_hash(user["password_hash"], password)):
                 flash("Wrong username or password.", "danger")
             else:
                 session.clear()
                 session["user_id"] = user["id"]
-                flash(f"Welcome back, {user['username']}!", "success")
+                flash(f"Welcome back, {user['name']}!", "success")
                 next_url = request.args.get("next", "")
                 # Only follow links inside this site (never to other websites).
                 if next_url.startswith("/") and not next_url.startswith("//"):
                     return redirect(next_url)
+                if user["role"] == "firm":
+                    return redirect(url_for("firm_dashboard"))
                 return redirect(url_for("dashboard"))
         return render_template("login.html")
 
@@ -255,80 +434,256 @@ def create_app(test_config=None):
     @app.route("/dashboard")
     @login_required
     def dashboard():
-        search = request.args.get("q", "").strip()
-        status = request.args.get("status", "")
-
-        sql = "SELECT * FROM items WHERE user_id = ?"
-        params = [g.user["id"]]
-        if search:
-            sql += " AND (title LIKE ? OR description LIKE ?)"
-            params += [f"%{search}%", f"%{search}%"]
-        if status in STATUSES:
-            sql += " AND status = ?"
-            params.append(status)
-        sql += " ORDER BY id DESC"
-
+        if g.user["role"] == "firm":
+            return redirect(url_for("firm_dashboard"))
         db = get_db()
-        items = db.execute(sql, params).fetchall()
-        counts = {s: 0 for s in STATUSES}
-        for row in db.execute(
-            "SELECT status, COUNT(*) AS n FROM items WHERE user_id = ? GROUP BY status",
-            (g.user["id"],),
-        ):
-            counts[row["status"]] = row["n"]
+        business = get_own_business()
+        documents = []
+        document_summary = {
+            "overall_percentage": 0,
+            "category_percentages": {document_type: 0 for document_type in DOCUMENT_TYPES},
+            "missing_types": list(DOCUMENT_TYPES),
+        }
+        firm_grants = []
+        if business is not None:
+            documents = db.execute(
+                "SELECT * FROM documents WHERE business_id = ? ORDER BY id DESC",
+                (business["id"],),
+            ).fetchall()
+            document_summary = get_business_document_summary(business["id"])
+            firm_grants = db.execute(
+                "SELECT firm_clients.id, users.name, users.email FROM firm_clients "
+                "JOIN users ON users.id = firm_clients.firm_user_id "
+                "WHERE firm_clients.business_id = ? AND firm_clients.status = 'active' "
+                "ORDER BY users.name",
+                (business["id"],),
+            ).fetchall()
         return render_template(
-            "dashboard.html", items=items, counts=counts, search=search, status=status
+            "dashboard.html",
+            business=business, documents=documents, document_summary=document_summary,
+            document_types=DOCUMENT_TYPES, firm_grants=firm_grants,
         )
 
-    @app.route("/items/new", methods=["GET", "POST"])
-    @login_required
-    def item_new():
-        item = {"title": "", "description": "", "status": "todo"}
+    @app.route("/business/profile", methods=["GET", "POST"])
+    @sme_required
+    def business_profile():
+        row = get_own_business()
+        business = dict(row) if row is not None else None
         if request.method == "POST":
-            item, error = read_item_form()
+            data, error = read_business_form()
+            if error:
+                flash(error, "danger")
+                business = data
+            else:
+                db = get_db()
+                if business is None:
+                    db.execute(
+                        "INSERT INTO businesses "
+                        "(owner_user_id, business_name, registration_number, business_type, contact_email, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (g.user["id"], data["business_name"], data["registration_number"],
+                         data["business_type"], data["contact_email"], now()),
+                    )
+                else:
+                    db.execute(
+                        "UPDATE businesses SET business_name = ?, registration_number = ?, "
+                        "business_type = ?, contact_email = ? WHERE id = ? AND owner_user_id = ?",
+                        (data["business_name"], data["registration_number"], data["business_type"],
+                         data["contact_email"], business["id"], g.user["id"]),
+                    )
+                db.commit()
+                flash("Business profile saved.", "success")
+                return redirect(url_for("dashboard"))
+        return render_template("business_profile.html", business=business)
+
+    @app.route("/documents/new", methods=["GET", "POST"])
+    @sme_required
+    def document_new():
+        business = get_own_business()
+        if business is None:
+            flash("Create your business profile before uploading documents.", "warning")
+            return redirect(url_for("business_profile"))
+
+        if request.method == "POST":
+            document_type = request.form.get("document_type", "")
+            uploaded_file = request.files.get("document")
+            error = None
+            safe_name = ""
+            extension = ""
+
+            if document_type not in DOCUMENT_TYPES:
+                error = "Choose a valid document type."
+            elif uploaded_file is None or not uploaded_file.filename:
+                error = "Choose a document to upload."
+            else:
+                safe_name = secure_filename(uploaded_file.filename)
+                if not safe_name or len(safe_name) > 255 or "." not in safe_name:
+                    error = "Choose a file with a valid filename."
+                else:
+                    extension = safe_name.rsplit(".", 1)[1].lower()
+                    if extension not in DOCUMENT_EXTENSIONS:
+                        error = "Upload a PDF, PNG, or JPG file."
+                    elif not has_allowed_file_signature(uploaded_file, extension):
+                        error = "The file contents do not match the selected file type."
+
             if error:
                 flash(error, "danger")
             else:
-                db = get_db()
-                db.execute(
-                    "INSERT INTO items (user_id, title, description, status, created_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (g.user["id"], item["title"], item["description"], item["status"], now()),
-                )
-                db.commit()
-                flash("Item added.", "success")
+                stored_name = secrets.token_hex(16) + "." + extension
+                file_path = os.path.join(app.config["UPLOAD_FOLDER"], stored_name)
+                uploaded_file.save(file_path)
+                try:
+                    db = get_db()
+                    db.execute(
+                        "INSERT INTO documents "
+                        "(business_id, uploaded_by, original_name, stored_name, document_type, "
+                        "completeness_percent, processing_status, uploaded_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (business["id"], g.user["id"], safe_name, stored_name,
+                         document_type, secrets.randbelow(101), "uploaded", now()),
+                    )
+                    db.commit()
+                except sqlite3.Error:
+                    os.remove(file_path)
+                    raise
+                flash("Document uploaded. Its completeness percentage is randomized for this demo.", "success")
                 return redirect(url_for("dashboard"))
-        return render_template("item_form.html", item=item, is_new=True)
+        return render_template("document_form.html")
 
-    @app.route("/items/<int:item_id>/edit", methods=["GET", "POST"])
+    @app.route("/documents/<int:document_id>/download")
     @login_required
-    def item_edit(item_id):
-        item = get_own_item(item_id)
-        if request.method == "POST":
-            data, error = read_item_form()
-            if error:
-                flash(error, "danger")
-                item = data
-            else:
-                db = get_db()
-                db.execute(
-                    "UPDATE items SET title = ?, description = ?, status = ? WHERE id = ?",
-                    (data["title"], data["description"], data["status"], item_id),
-                )
-                db.commit()
-                flash("Item updated.", "success")
-                return redirect(url_for("dashboard"))
-        return render_template("item_form.html", item=item, item_id=item_id, is_new=False)
+    def document_download(document_id):
+        document = get_accessible_document(document_id)
+        return send_from_directory(
+            app.config["UPLOAD_FOLDER"], document["stored_name"],
+            as_attachment=True, download_name=document["original_name"],
+        )
 
-    @app.route("/items/<int:item_id>/delete", methods=["POST"])
-    @login_required
-    def item_delete(item_id):
-        get_own_item(item_id)  # makes sure it is yours (404 otherwise)
+    @app.route("/documents/<int:document_id>/delete", methods=["POST"])
+    @sme_required
+    def document_delete(document_id):
+        document = get_own_document(document_id)
+        file_path = os.path.join(app.config["UPLOAD_FOLDER"], document["stored_name"])
+        if os.path.isfile(file_path):
+            os.remove(file_path)
         db = get_db()
-        db.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        db.execute("DELETE FROM documents WHERE id = ?", (document_id,))
         db.commit()
-        flash("Item deleted.", "info")
+        flash("Document deleted.", "info")
         return redirect(url_for("dashboard"))
+
+    @app.route("/recommendations")
+    @sme_required
+    def recommendations():
+        business = get_own_business()
+        if business is None:
+            flash("Create your business profile before viewing recommendations.", "warning")
+            return redirect(url_for("business_profile"))
+        summary = get_business_document_summary(business["id"])
+        return render_template(
+            "recommendations.html", missing_types=summary["missing_types"],
+            application_preparation=APPLICATION_PREPARATION, document_types=DOCUMENT_TYPES,
+        )
+
+    @app.route("/firm/clients")
+    @login_required
+    def firm_dashboard():
+        if g.user["role"] != "firm":
+            abort(403)
+        client_rows = get_db().execute(
+            "SELECT businesses.id, businesses.business_name, businesses.business_type, "
+            "users.name AS owner_name "
+            "FROM firm_clients JOIN businesses ON businesses.id = firm_clients.business_id "
+            "JOIN users ON users.id = businesses.owner_user_id "
+            "WHERE firm_clients.firm_user_id = ? AND firm_clients.status = 'active' "
+            "ORDER BY businesses.business_name",
+            (g.user["id"],),
+        ).fetchall()
+        clients = []
+        for row in client_rows:
+            client = dict(row)
+            summary = get_business_document_summary(client["id"])
+            client["document_percentage"] = summary["overall_percentage"]
+            clients.append(client)
+        return render_template("firm_dashboard.html", clients=clients)
+
+    @app.route("/business/share", methods=["POST"])
+    @sme_required
+    def business_share():
+        business = get_own_business()
+        if business is None:
+            abort(404)
+        firm_email = request.form.get("firm_email", "").strip().lower()
+        if not 3 <= len(firm_email) <= 254 or firm_email.count("@") != 1:
+            flash("Enter a valid accounting firm email address.", "danger")
+            return redirect(url_for("dashboard"))
+
+        db = get_db()
+        firm = db.execute(
+            "SELECT id FROM users WHERE email = ? AND role = 'firm'", (firm_email,)
+        ).fetchone()
+        if firm is None:
+            flash("No accounting firm account was found for that email.", "danger")
+            return redirect(url_for("dashboard"))
+
+        existing = db.execute(
+            "SELECT id FROM firm_clients WHERE firm_user_id = ? AND business_id = ?",
+            (firm["id"], business["id"]),
+        ).fetchone()
+        if existing is None:
+            db.execute(
+                "INSERT INTO firm_clients (firm_user_id, business_id, status, created_at) "
+                "VALUES (?, ?, 'active', ?)",
+                (firm["id"], business["id"], now()),
+            )
+        else:
+            db.execute(
+                "UPDATE firm_clients SET status = 'active', created_at = ? WHERE id = ?",
+                (now(), existing["id"]),
+            )
+        db.commit()
+        flash("Business access granted to the accounting firm.", "success")
+        return redirect(url_for("dashboard"))
+
+    @app.route("/business/share/<int:grant_id>/revoke", methods=["POST"])
+    @sme_required
+    def business_share_revoke(grant_id):
+        db = get_db()
+        result = db.execute(
+            "UPDATE firm_clients SET status = 'revoked' WHERE id = ? AND status = 'active' "
+            "AND business_id IN (SELECT id FROM businesses WHERE owner_user_id = ?)",
+            (grant_id, g.user["id"]),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        db.commit()
+        flash("Accounting firm access revoked.", "info")
+        return redirect(url_for("dashboard"))
+
+    @app.route("/firm/clients/<int:business_id>")
+    @login_required
+    def firm_client_detail(business_id):
+        if g.user["role"] != "firm":
+            abort(403)
+        db = get_db()
+        business = db.execute(
+            "SELECT businesses.*, users.name AS owner_name FROM firm_clients "
+            "JOIN businesses ON businesses.id = firm_clients.business_id "
+            "JOIN users ON users.id = businesses.owner_user_id "
+            "WHERE businesses.id = ? AND firm_clients.firm_user_id = ? "
+            "AND firm_clients.status = 'active'",
+            (business_id, g.user["id"]),
+        ).fetchone()
+        if business is None:
+            abort(404)
+        documents = db.execute(
+            "SELECT * FROM documents WHERE business_id = ? ORDER BY id DESC", (business_id,)
+        ).fetchall()
+        document_summary = get_business_document_summary(business_id)
+        return render_template(
+            "firm_client_detail.html", business=business, documents=documents,
+            document_summary=document_summary, document_types=DOCUMENT_TYPES,
+        )
 
     @app.route("/health")
     def health():
@@ -343,6 +698,12 @@ def create_app(test_config=None):
     @app.errorhandler(404)
     def not_found(_e):
         return render_template("error.html", code=404, message="We couldn't find that page."), 404
+
+    @app.errorhandler(413)
+    def upload_too_large(_e):
+        return render_template(
+            "error.html", code=413, message="That file is too large. The limit is 10 MB."
+        ), 413
 
     return app
 

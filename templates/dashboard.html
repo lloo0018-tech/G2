@@ -1,65 +1,108 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-  <h1 class="h3 m-0">My items</h1>
-  <a class="btn btn-primary" href="{{ url_for('item_new') }}">+ New item</a>
-</div>
-
-<div class="row g-3 mb-3">
-  {% for s in statuses %}
-  <div class="col-4">
-    <a class="card stat-card text-decoration-none p-3 text-center {% if status == s %}border-primary{% endif %}"
-       href="{{ url_for('dashboard', status=s) }}">
-      <div class="fs-3 fw-bold">{{ counts[s] }}</div>
-      <div class="text-secondary text-capitalize small">{{ s }}</div>
-    </a>
-  </div>
-  {% endfor %}
-</div>
-
-<form class="row g-2 mb-3" method="get">
-  <div class="col-sm-7"><input class="form-control" name="q" value="{{ search }}" placeholder="Search title or description"></div>
-  <div class="col-7 col-sm-3">
-    <select class="form-select" name="status">
-      <option value="">All statuses</option>
-      {% for s in statuses %}<option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
-    </select>
-  </div>
-  <div class="col-5 col-sm-2 d-flex gap-2">
-    <button class="btn btn-outline-primary flex-fill">Filter</button>
-    {% if search or status %}<a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}" title="Clear">&times;</a>{% endif %}
-  </div>
-</form>
-
-{% if items %}
-  <div class="list-group">
-    {% for item in items %}
-    <div class="list-group-item py-3">
-      <div class="d-flex flex-wrap justify-content-between gap-2">
-        <div class="me-auto" style="min-width: 0;">
-          <div class="fw-semibold text-break">{{ item['title'] }}</div>
-          {% if item['description'] %}<div class="text-secondary small text-break item-desc">{{ item['description'] }}</div>{% endif %}
-          <div class="small mt-1">
-            <span class="badge status-{{ item['status'] }}">{{ item['status'] }}</span>
-            <span class="text-secondary ms-1">{{ item['created_at'] }}</span>
-          </div>
-        </div>
-        <div class="d-flex gap-2 align-items-start">
-          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('item_edit', item_id=item['id']) }}">Edit</a>
-          <form method="post" action="{{ url_for('item_delete', item_id=item['id']) }}" class="m-0"
-                onsubmit="return confirm('Delete this item?');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-outline-danger">Delete</button>
-          </form>
-        </div>
-      </div>
+<section class="border rounded p-3 p-md-4 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <p class="text-uppercase small fw-semibold text-secondary mb-1">Business profile</p>
+      {% if business %}
+        <h2 class="h5 mb-1">{{ business['business_name'] }}</h2>
+        <p class="text-secondary small mb-0">{{ business['business_type'].replace('_', ' ')|title }} · {{ business['contact_email'] }}</p>
+      {% else %}
+        <h2 class="h5 mb-1">Set up your business profile</h2>
+        <p class="text-secondary small mb-0">Add basic business details to get started with CreditReady.</p>
+      {% endif %}
     </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('business_profile') }}">
+        {% if business %}Edit profile{% else %}Add business profile{% endif %}
+      </a>
+      {% if business %}<a class="btn btn-primary" href="{{ url_for('document_new') }}">Upload document</a>{% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="border rounded p-3 p-md-4 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+      <p class="text-uppercase small fw-semibold text-secondary mb-1">Document coverage</p>
+      <h2 class="h5 mb-1">Completeness estimate: {{ document_summary['overall_percentage'] }}%</h2>
+      <p class="text-secondary small mb-0">Randomized demo values; uploaded file contents are not read or graded.</p>
+    </div>
+    {% if business %}<a class="btn btn-primary" href="{{ url_for('document_new') }}">Upload a document</a>{% endif %}
+  </div>
+  <div class="progress score-meter mb-3" role="progressbar" aria-label="Randomized document completeness estimate" aria-valuenow="{{ document_summary['overall_percentage'] }}" aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-bar bg-success" style="width: {{ document_summary['overall_percentage'] }}%"></div>
+  </div>
+  <div class="row g-2 border-top pt-3">
+    {% for document_type in document_types %}
+      <div class="col-sm-6 col-lg-4 d-flex justify-content-between gap-2">
+        <span>{{ document_type.replace('_', ' ')|title }}</span>
+        <strong>{{ document_summary['category_percentages'][document_type] }}%</strong>
+      </div>
     {% endfor %}
   </div>
-{% else %}
-  <div class="text-center text-secondary py-5 border rounded">
-    {% if search or status %}No items match your filter.{% else %}No items yet. Click <strong>+ New item</strong> to add your first one.{% endif %}
-  </div>
+  <a class="small d-inline-block mt-3" href="{{ url_for('recommendations') }}">View document checklist and preparation steps</a>
+</section>
+
+{% if business %}
+<section class="mb-4">
+  <h2 class="h5 mb-2">Authorized accounting firms</h2>
+  {% if firm_grants %}
+    <div class="list-group mb-3">
+      {% for grant in firm_grants %}
+      <div class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div><span class="fw-semibold">{{ grant['name'] }}</span><span class="text-secondary small ms-2">{{ grant['email'] }}</span></div>
+        <form method="post" action="{{ url_for('business_share_revoke', grant_id=grant['id']) }}" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-danger">Revoke access</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-secondary small">No firm has access to your business.</p>
+  {% endif %}
+  <form class="row g-2" method="post" action="{{ url_for('business_share') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-sm-8">
+      <label class="visually-hidden" for="firm_email">Accounting firm email</label>
+      <input class="form-control" id="firm_email" name="firm_email" type="email" maxlength="254" required placeholder="Accounting firm email">
+    </div>
+    <div class="col-sm-4"><button class="btn btn-outline-primary w-100">Grant firm access</button></div>
+  </form>
+</section>
+
+<section class="mb-4">
+  <h2 class="h5 mb-3">Financial documents</h2>
+  {% if documents %}
+    <div class="list-group">
+      {% for document in documents %}
+      <div class="list-group-item py-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="me-auto" style="min-width: 0;">
+            <div class="fw-semibold text-break">{{ document['original_name'] }}</div>
+            <div class="small text-secondary">
+              {{ document['document_type'].replace('_', ' ')|title }} · Uploaded {{ document['uploaded_at'] }} · randomized demo estimate only
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <span class="badge text-bg-secondary align-self-center">{{ document['completeness_percent'] }}%</span>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('document_download', document_id=document['id']) }}">Download</a>
+            <form method="post" action="{{ url_for('document_delete', document_id=document['id']) }}" class="m-0"
+                  onsubmit="return confirm('Delete this document?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-secondary mb-0">No documents uploaded yet.</p>
+  {% endif %}
+</section>
 {% endif %}
+
 {% endblock %}

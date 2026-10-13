@@ -6,9 +6,9 @@
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="mb-3">
-      <label class="form-label" for="username">Username</label>
-      <input class="form-control" id="username" name="username" required
-             value="{{ request.form.get('username', '') }}" autofocus>
+          <label class="form-label" for="email">Email address or previous username</label>
+          <input class="form-control" id="email" name="email" type="text" required maxlength="254" autocomplete="username"
+            value="{{ request.form.get('email', '') }}" autofocus>
     </div>
     <div class="mb-3">
       <label class="form-label" for="password">Password</label>

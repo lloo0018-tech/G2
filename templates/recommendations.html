@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Recommendations · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <p class="text-uppercase small fw-semibold text-secondary mb-1">Next steps</p>
+    <h1 class="h2">Recommendations</h1>
+  </div>
+  <a class="btn btn-outline-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+</div>
+<section class="mb-4">
+  <h2 class="h5">Document checklist</h2>
+  <ul class="list-group">
+    {% for document_type in document_types %}
+      <li class="list-group-item d-flex justify-content-between gap-3">
+        <span>{{ document_type.replace('_', ' ')|title }}</span>
+        {% if document_type in missing_types %}<span class="badge text-bg-secondary">Not uploaded</span>
+        {% else %}<span class="badge text-bg-success">Uploaded</span>{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+  <a class="btn btn-primary mt-3" href="{{ url_for('document_new') }}">Upload a document</a>
+</section>
+<section class="border-top pt-4 mb-4">
+  <h2 class="h5">Financing application preparation</h2>
+  <ul class="list-group">
+    {% for step in application_preparation %}<li class="list-group-item py-3">{{ step }}</li>{% endfor %}
+  </ul>
+</section>
+<p class="small text-secondary">These suggestions are generated from self-entered information for this demonstration. They are not financial advice or a promise of financing approval.</p>
+{% endblock %}

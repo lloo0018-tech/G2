@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Upload a document · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="form-card card p-4 mx-auto">
+  <h1 class="h3 mb-1">Upload a document</h1>
+  <p class="text-secondary mb-4">PDF, PNG, and JPG files up to 10 MB are accepted and stored privately. A randomized demo completeness percentage will be assigned; the file is not read or graded.</p>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-3">
+      <label class="form-label" for="document_type">Document type</label>
+      <select class="form-select" id="document_type" name="document_type" required>
+        <option value="">Choose a type</option>
+        {% for type in document_types %}
+          <option value="{{ type }}">{{ type.replace('_', ' ')|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-4">
+      <label class="form-label" for="document">File</label>
+      <input class="form-control" id="document" name="document" type="file" accept=".pdf,.png,.jpg,.jpeg" required>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary">Upload document</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Firm dashboard · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="mb-4">
+  <p class="text-uppercase small fw-semibold text-secondary mb-1">Accounting firm</p>
+  <h1 class="h2">Client dashboard</h1>
+  <p class="text-secondary mb-0">Only businesses that granted your firm access appear here.</p>
+</section>
+{% if clients %}
+  <div class="list-group">
+    {% for client in clients %}
+    <a class="list-group-item list-group-item-action py-3" href="{{ url_for('firm_client_detail', business_id=client['id']) }}">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <div class="fw-semibold">{{ client['business_name'] }}</div>
+          <div class="small text-secondary">{{ client['owner_name'] }} · {{ client['business_type'].replace('_', ' ')|title }}</div>
+        </div>
+        <span class="badge text-bg-success">Document completeness estimate: {{ client['document_percentage'] }}%</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="border rounded p-4 text-center text-secondary">No authorized client businesses yet.</div>
+{% endif %}
+{% endblock %}

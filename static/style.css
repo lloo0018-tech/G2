@@ -1,25 +1,20 @@
 /* Our own styles. Bootstrap (loaded in base.html) does most of the work.
    Change --brand to give your app its own colour. */
 :root {
-  --brand: #4f46e5;
+  --brand: #147d64;
   --bs-primary: var(--brand);
   --bs-link-color: var(--brand);
 }
 
 .btn-primary { --bs-btn-bg: var(--brand); --bs-btn-border-color: var(--brand);
-               --bs-btn-hover-bg: #4338ca; --bs-btn-hover-border-color: #4338ca; }
+               --bs-btn-hover-bg: #0f604d; --bs-btn-hover-border-color: #0f604d; }
 .btn-outline-primary { --bs-btn-color: var(--brand); --bs-btn-border-color: var(--brand);
                        --bs-btn-hover-bg: var(--brand); --bs-btn-hover-border-color: var(--brand); }
 
 .auth-card { max-width: 420px; }
 .form-card { max-width: 640px; }
 .hero h1 { color: var(--brand); }
-
-.stat-card { color: inherit; transition: transform .1s ease; }
-.stat-card:hover { transform: translateY(-2px); }
-
-.item-desc { white-space: pre-line; }
-
-.status-todo  { background: #6b7280; }
-.status-doing { background: #d97706; }
-.status-done  { background: #16a34a; }
+.score-meter { height: .65rem; }
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar { transition: none; }
+}

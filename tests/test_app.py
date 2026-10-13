@@ -1,11 +1,15 @@
 """Automatic checks for the app. Run them with:  python -m pytest
 If every test passes, the main features still work."""
 import os
+import io
+import sqlite3
 import sys
 
 import pytest
+from werkzeug.security import generate_password_hash
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import app as app_module  # noqa: E402
 from app import create_app  # noqa: E402
 
 
@@ -14,6 +18,7 @@ def app(tmp_path):
     return create_app({
         "TESTING": True,
         "DATABASE": str(tmp_path / "test.db"),
+        "UPLOAD_FOLDER": str(tmp_path / "private_uploads"),
         "CSRF_ENABLED": False,
     })
 
@@ -23,13 +28,17 @@ def client(app):
     return app.test_client()
 
 
-def register(client, username="alice", password="secret123"):
-    return client.post("/register", data={"username": username, "password": password},
+def register(client, username="alice", password="secret123", role="sme"):
+    email = username if "@" in username else username + "@example.test"
+    name = email.split("@", 1)[0]
+    return client.post("/register", data={"name": name, "email": email,
+                                          "role": role, "password": password},
                        follow_redirects=True)
 
 
 def login(client, username="alice", password="secret123"):
-    return client.post("/login", data={"username": username, "password": password},
+    email = username if "@" in username else username + "@example.test"
+    return client.post("/login", data={"email": email, "password": password},
                        follow_redirects=True)
 
 
@@ -53,16 +62,317 @@ def test_register_and_login(client):
     assert b"Account created" in register(client).data
     response = login(client)
     assert b"Welcome back, alice" in response.data
-    assert b"My items" in response.data
+    assert b"Completeness estimate: 0%" in response.data
 
 
 def test_duplicate_username_rejected(client):
     register(client)
-    assert b"already taken" in register(client).data
+    assert b"already exists" in register(client).data
 
 
 def test_short_password_rejected(client):
-    assert b"at least 6" in register(client, password="123").data
+    assert b"6-128 characters" in register(client, password="123").data
+
+
+def test_invalid_account_role_rejected(client):
+    response = client.post("/register", data={"name": "Alice", "email": "alice@example.test",
+                                              "role": "admin", "password": "secret123"})
+    assert b"Choose SME or accounting firm" in response.data
+
+
+def test_firm_account_uses_firm_dashboard_and_cannot_open_sme_profile(client):
+    register(client, role="firm")
+    response = login(client)
+    assert b"Client dashboard" in response.data
+    assert client.get("/dashboard").status_code == 302
+    assert client.get("/business/profile").status_code == 403
+
+
+def test_business_profile_can_be_created_and_updated(client):
+    logged_in(client)
+    profile = {"business_name": "Kopi Kita Sdn Bhd", "registration_number": "202401234567",
+               "business_type": "private_limited", "contact_email": "finance@kopikita.test"}
+    response = client.post("/business/profile", data=profile, follow_redirects=True)
+    assert b"Business profile saved" in response.data
+    assert b"Kopi Kita Sdn Bhd" in response.data
+    response = client.get("/business/profile")
+    assert response.status_code == 200
+    assert b"Kopi Kita Sdn Bhd" in response.data
+
+    profile["business_name"] = "Kopi Kita Holdings"
+    response = client.post("/business/profile", data=profile, follow_redirects=True)
+    assert b"Kopi Kita Holdings" in response.data
+    assert b"Kopi Kita Sdn Bhd" not in response.data
+
+
+def test_business_profile_is_private_and_firm_cannot_edit_it(client):
+    logged_in(client, "alice")
+    client.post("/business/profile", data={"business_name": "Alice Trading", "business_type": "other",
+                                           "contact_email": "alice@business.test"})
+    client.post("/logout")
+
+    logged_in(client, "bob")
+    assert b"Alice Trading" not in client.get("/dashboard").data
+    assert b"Alice Trading" not in client.get("/business/profile").data
+    client.post("/logout")
+
+    register(client, "accountant", role="firm")
+    login(client, "accountant")
+    assert client.get("/business/profile").status_code == 403
+
+
+def test_business_profile_rejects_invalid_fields(client):
+    logged_in(client)
+    response = client.post("/business/profile", data={"business_name": " ",
+                                                       "business_type": "unknown",
+                                                       "contact_email": "not-an-email"},
+                           follow_redirects=True)
+    assert b"Business name must be 2-120 characters" in response.data
+
+
+def test_document_completeness_is_zero_without_uploads(client):
+    logged_in(client)
+    create_business_profile(client)
+    response = client.get("/dashboard")
+    assert b"Completeness estimate: 0%" in response.data
+    assert b"uploaded file contents are not read or graded" in response.data
+
+
+def test_each_upload_gets_a_random_value_and_missing_categories_count_as_zero(client, app, monkeypatch):
+    logged_in(client)
+    create_business_profile(client)
+    generated_values = iter([90, 60, 50, 80, 70, 100, 30])
+
+    def fake_randbelow(limit):
+        assert limit == 101
+        return next(generated_values)
+
+    monkeypatch.setattr(app_module.secrets, "randbelow", fake_randbelow)
+    document_types = [
+        "financial_statements", "bank_statements", "tax_documents", "company_documents",
+        "financing_documents", "business_documents", "financial_statements",
+    ]
+    for index, document_type in enumerate(document_types):
+        upload_pdf(client, filename="document-{}.pdf".format(index), document_type=document_type)
+
+    response = client.get("/dashboard")
+    assert b"Completeness estimate: 70%" in response.data
+    assert b"Financial Statements" in response.data and b"60%" in response.data
+    with app.app_context():
+        from app import get_db
+        percentages = [row[0] for row in get_db().execute(
+            "SELECT completeness_percent FROM documents ORDER BY id"
+        ).fetchall()]
+        assert percentages == [90, 60, 50, 80, 70, 100, 30]
+
+
+def test_document_checklist_shows_missing_and_uploaded_categories(client, monkeypatch):
+    logged_in(client)
+    create_business_profile(client)
+    monkeypatch.setattr(app_module.secrets, "randbelow", lambda _limit: 80)
+    upload_pdf(client, document_type="tax_documents")
+
+    response = client.get("/recommendations")
+    assert b"Tax Documents" in response.data
+    assert b"Uploaded" in response.data
+    assert b"Financial Statements" in response.data
+    assert b"Not uploaded" in response.data
+    assert b"Prepare a cash-flow forecast" in response.data
+
+
+def create_business_profile(client):
+    return client.post("/business/profile", data={"business_name": "Example Trading",
+                                                  "business_type": "other",
+                                                  "contact_email": "owner@example.test"})
+
+
+def upload_pdf(client, filename="annual-report.pdf", content=b"%PDF-1.7\nexample report",
+               document_type="financial_statements"):
+    return client.post("/documents/new", data={
+        "document_type": document_type,
+        "document": (io.BytesIO(content), filename),
+    }, content_type="multipart/form-data", follow_redirects=True)
+
+
+def test_document_upload_download_and_delete(client, app):
+    logged_in(client)
+    create_business_profile(client)
+
+    response = upload_pdf(client)
+    assert b"Document uploaded" in response.data
+    assert b"annual-report.pdf" in response.data
+    assert b"randomized demo estimate only" in response.data
+
+    response = client.get("/documents/1/download")
+    assert response.status_code == 200
+    assert response.data == b"%PDF-1.7\nexample report"
+    assert "annual-report.pdf" in response.headers["Content-Disposition"]
+
+    response = client.post("/documents/1/delete", follow_redirects=True)
+    assert b"annual-report.pdf" not in response.data
+    assert client.get("/documents/1/download").status_code == 404
+    with app.app_context():
+        from app import get_db
+        assert get_db().execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+
+
+def test_document_upload_requires_profile_and_rejects_invalid_file(client):
+    logged_in(client)
+    response = client.get("/documents/new")
+    assert response.status_code == 302
+    assert "/business/profile" in response.headers["Location"]
+
+    create_business_profile(client)
+    response = upload_pdf(client, filename="report.exe", content=b"not a document")
+    assert b"Upload a PDF, PNG, or JPG file" in response.data
+    response = upload_pdf(client, content=b"not really a PDF")
+    assert b"file contents do not match" in response.data
+
+    response = client.post("/documents/new", data={
+        "document_type": "unknown",
+        "document": (io.BytesIO(b"%PDF-1.7"), "report.pdf"),
+    }, content_type="multipart/form-data", follow_redirects=True)
+    assert b"Choose a valid document type" in response.data
+
+
+def test_oversized_document_upload_is_rejected(client, app):
+    logged_in(client)
+    create_business_profile(client)
+    app.config["MAX_CONTENT_LENGTH"] = 32
+
+    response = upload_pdf(client, content=b"%PDF-1.7\n" + b"x" * 100)
+    assert response.status_code == 413
+    assert b"limit is 10 MB" in response.data
+
+
+def test_users_cannot_download_or_delete_another_business_document(client):
+    logged_in(client, "alice")
+    create_business_profile(client)
+    upload_pdf(client)
+    client.post("/logout")
+
+    logged_in(client, "bob")
+    assert client.get("/documents/1/download").status_code == 404
+    assert client.post("/documents/1/delete").status_code == 404
+    assert b"annual-report.pdf" not in client.get("/dashboard").data
+
+
+def test_firm_cannot_upload_or_view_unshared_business(client):
+    register(client, "accountant", role="firm")
+    login(client, "accountant")
+    assert client.get("/documents/new").status_code == 403
+    assert client.get("/documents/1/download").status_code == 404
+    assert client.get("/firm/clients/1").status_code == 404
+
+
+def test_sme_can_grant_and_revoke_firm_access(client, app):
+    logged_in(client, "alice")
+    create_business_profile(client)
+    upload_pdf(client)
+    client.post("/logout")
+
+    register(client, "bob")
+    login(client, "bob")
+    response = client.post("/business/profile", data={
+        "business_name": "Unshared Business", "business_type": "other",
+        "contact_email": "bob@business.test",
+    })
+    assert response.status_code == 302
+    client.post("/logout")
+
+    register(client, "accountant", role="firm")
+    client.post("/logout")
+    login(client, "alice")
+    response = client.post("/business/share", data={"firm_email": "accountant@example.test"},
+                           follow_redirects=True)
+    assert b"Business access granted" in response.data
+    assert b"accountant@example.test" in response.data
+
+    with app.app_context():
+        from app import get_db
+        grant_id = get_db().execute("SELECT id FROM firm_clients").fetchone()["id"]
+
+    client.post("/logout")
+    login(client, "accountant")
+    assert b"Example Trading" in client.get("/firm/clients").data
+    assert b"Document completeness estimate" in client.get("/firm/clients").data
+    assert b"Unshared Business" not in client.get("/firm/clients").data
+    assert client.get("/firm/clients/2").status_code == 404
+    detail = client.get("/firm/clients/1")
+    assert b"annual-report.pdf" in detail.data
+    assert b"Document completeness estimate" in detail.data
+    assert client.get("/documents/1/download").data == b"%PDF-1.7\nexample report"
+    client.post("/logout")
+    login(client, "alice")
+    response = client.post("/business/share/{}/revoke".format(grant_id), follow_redirects=True)
+    assert b"access revoked" in response.data
+
+    client.post("/logout")
+    login(client, "accountant")
+    assert b"Example Trading" not in client.get("/firm/clients").data
+    assert client.get("/firm/clients/1").status_code == 404
+    assert client.get("/documents/1/download").status_code == 404
+
+
+def test_existing_user_table_is_migrated(tmp_path):
+    database = tmp_path / "old.db"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, "
+                       "password_hash TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("INSERT INTO users VALUES (1, 'legacy', ?, '2024-01-01')",
+                       (generate_password_hash("secret123", method="pbkdf2:sha256"),))
+    connection.commit()
+    connection.close()
+
+    migrated_app = create_app({"TESTING": True, "DATABASE": str(database), "CSRF_ENABLED": False})
+    with migrated_app.app_context():
+        from app import get_db
+        user = get_db().execute(
+            "SELECT email, name, role, account_status FROM users WHERE id = ?", (1,)
+        ).fetchone()
+        assert user["email"] == "legacy"
+        assert user["name"] == "legacy"
+        assert user["role"] == "sme"
+        assert user["account_status"] == "active"
+    response = migrated_app.test_client().post(
+        "/login", data={"email": "legacy", "password": "secret123"}
+    )
+    assert response.status_code == 302
+    assert "/dashboard" in response.headers["Location"]
+
+
+def test_existing_document_categories_and_scores_are_migrated(tmp_path):
+    database = tmp_path / "old_documents.db"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, "
+                       "password_hash TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("INSERT INTO users VALUES (1, 'legacy', 'hash', '2024-01-01')")
+    connection.execute("CREATE TABLE businesses (id INTEGER PRIMARY KEY, owner_user_id INTEGER UNIQUE, "
+                       "business_name TEXT NOT NULL, registration_number TEXT NOT NULL DEFAULT '', "
+                       "business_type TEXT NOT NULL, contact_email TEXT NOT NULL, created_at TEXT NOT NULL)")
+    connection.execute("INSERT INTO businesses VALUES (1, 1, 'Legacy Co', '', 'other', "
+                       "'owner@example.test', '2024-01-01')")
+    connection.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, business_id INTEGER NOT NULL, "
+                       "uploaded_by INTEGER NOT NULL, original_name TEXT NOT NULL, stored_name TEXT NOT NULL, "
+                       "document_type TEXT NOT NULL, processing_status TEXT NOT NULL, uploaded_at TEXT NOT NULL)")
+    connection.executemany(
+        "INSERT INTO documents VALUES (?, 1, 1, ?, ?, ?, 'uploaded', '2024-01-01')",
+        [(1, "statement.pdf", "stored-1.pdf", "financial_statement"),
+         (2, "supporting.pdf", "stored-2.pdf", "supporting_document")],
+    )
+    connection.commit()
+    connection.close()
+
+    migrated_app = create_app({"TESTING": True, "DATABASE": str(database),
+                               "UPLOAD_FOLDER": str(tmp_path / "uploads")})
+    with migrated_app.app_context():
+        from app import get_db
+        documents = get_db().execute(
+            "SELECT document_type, completeness_percent FROM documents ORDER BY id"
+        ).fetchall()
+        assert documents[0]["document_type"] == "financial_statements"
+        assert documents[1]["document_type"] == "business_documents"
+        assert all(0 <= document["completeness_percent"] <= 100 for document in documents)
 
 
 def test_wrong_password_rejected(client):
@@ -70,55 +380,20 @@ def test_wrong_password_rejected(client):
     assert b"Wrong username or password" in login(client, password="nope-nope").data
 
 
+def test_inactive_account_cannot_log_in(client, app):
+    register(client)
+    with app.app_context():
+        from app import get_db
+        get_db().execute("UPDATE users SET account_status = 'inactive' WHERE email = ?",
+                         ("alice@example.test",))
+        get_db().commit()
+    assert b"Wrong username or password" in login(client).data
+
+
 def test_dashboard_requires_login(client):
     response = client.get("/dashboard")
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
-
-
-def test_create_edit_delete_item(client):
-    logged_in(client)
-    response = client.post("/items/new", data={"title": "Buy milk", "description": "2 litres",
-                                                "status": "todo"}, follow_redirects=True)
-    assert b"Buy milk" in response.data
-
-    response = client.post("/items/1/edit", data={"title": "Buy oat milk", "description": "",
-                                                  "status": "done"}, follow_redirects=True)
-    assert b"Buy oat milk" in response.data
-
-    response = client.post("/items/1/delete", follow_redirects=True)
-    assert b"Buy oat milk" not in response.data
-    assert b"No items yet" in response.data
-
-
-def test_empty_title_rejected(client):
-    logged_in(client)
-    response = client.post("/items/new", data={"title": "  ", "status": "todo"},
-                           follow_redirects=True)
-    assert b"Title is required" in response.data
-
-
-def test_search_and_filter(client):
-    logged_in(client)
-    client.post("/items/new", data={"title": "Math homework", "status": "todo"})
-    client.post("/items/new", data={"title": "Science project", "status": "done"})
-
-    response = client.get("/dashboard?q=math")
-    assert b"Math homework" in response.data and b"Science project" not in response.data
-
-    response = client.get("/dashboard?status=done")
-    assert b"Science project" in response.data and b"Math homework" not in response.data
-
-
-def test_users_cannot_see_each_others_items(client):
-    logged_in(client, "alice")
-    client.post("/items/new", data={"title": "Alice secret", "status": "todo"})
-    client.post("/logout")
-
-    logged_in(client, "bob")
-    assert b"Alice secret" not in client.get("/dashboard").data
-    assert client.get("/items/1/edit").status_code == 404
-    assert client.post("/items/1/delete").status_code == 404
 
 
 def test_forms_without_csrf_token_are_blocked(tmp_path):

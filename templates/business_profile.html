@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Business profile · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="form-card card p-4 mx-auto">
+  <h1 class="h3 mb-1">Business profile</h1>
+  <p class="text-secondary mb-4">These details are private to your account.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-3">
+      <label class="form-label" for="business_name">Business name</label>
+      <input class="form-control" id="business_name" name="business_name" required minlength="2" maxlength="120"
+             value="{{ business.get('business_name', '') if business else '' }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="registration_number">Business registration number <span class="text-secondary">(optional)</span></label>
+      <input class="form-control" id="registration_number" name="registration_number" maxlength="60"
+             value="{{ business.get('registration_number', '') if business else '' }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="business_type">Business type</label>
+      <select class="form-select" id="business_type" name="business_type" required>
+        <option value="">Choose a type</option>
+        {% for type in business_types %}
+          <option value="{{ type }}" {% if business and business.get('business_type') == type %}selected{% endif %}>
+            {{ type.replace('_', ' ')|title }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-4">
+      <label class="form-label" for="contact_email">Business contact email</label>
+      <input class="form-control" id="contact_email" name="contact_email" type="email" required maxlength="254"
+             value="{{ business.get('contact_email', '') if business else '' }}">
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary">Save profile</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

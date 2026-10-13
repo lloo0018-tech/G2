@@ -1,18 +1,78 @@
 {% extends "base.html" %}
+{% block title %}Welcome · {{ app_name }}{% endblock %}
 {% block content %}
-<section class="hero text-center py-5">
-  <h1 class="display-5 fw-bold mb-3">{{ app_name }}</h1>
-  <p class="lead text-secondary mb-4 mx-auto" style="max-width: 36rem;">
-    Keep track of your work in one place. Sign up, add items, and move them from
-    <strong>todo</strong> to <strong>done</strong>.
-  </p>
-  <a class="btn btn-primary btn-lg me-2 mb-2" href="{{ url_for('register') }}">Get started</a>
-  <a class="btn btn-outline-secondary btn-lg mb-2" href="{{ url_for('login') }}">I have an account</a>
-</section>
+<div class="landing-layout">
+  <section class="landing-hero card mb-5" aria-labelledby="landing-title">
+    <div class="landing-hero-copy">
+      <p class="landing-eyebrow mb-3">A clearer view of what’s next</p>
+      <h1 class="landing-title mb-3" id="landing-title">Make informed decisions with confidence.</h1>
+      <p class="landing-description mb-4">
+        Bring important information together, understand what is ready, and take the next step
+        with a more complete picture.
+      </p>
+      <div class="d-flex flex-wrap gap-3">
+        <a class="btn btn-primary landing-cta" href="{{ url_for('register') }}">Get started</a>
+        <a class="btn btn-outline-secondary landing-secondary-cta" href="{{ url_for('login') }}">Sign in</a>
+      </div>
+    </div>
 
-<div class="row g-3 mt-2">
-  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Your own account</h2><p class="text-secondary mb-0">Passwords are stored safely as hashes, never as plain text.</p></div></div>
-  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Saved in a database</h2><p class="text-secondary mb-0">Everything is stored in SQLite, so it is still there tomorrow.</p></div></div>
-  <div class="col-md-4"><div class="card h-100 p-3"><h2 class="h5">Search and filter</h2><p class="text-secondary mb-0">Find any item fast by word or by status.</p></div></div>
+    <aside class="landing-widget" aria-labelledby="widget-title">
+      <div class="landing-widget-header">
+        <h2 class="h5 mb-0" id="widget-title">Overview</h2>
+        <span class="landing-widget-tag">Workspace</span>
+      </div>
+      <div class="landing-graphic" aria-hidden="true">
+        <span class="graphic-orbit graphic-orbit-one"></span>
+        <span class="graphic-orbit graphic-orbit-two"></span>
+        <span class="graphic-core">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="m6.5 12.5 3.6 3.6 7.4-8" />
+          </svg>
+        </span>
+      </div>
+      <h3 class="h5 text-center mb-2">Your next step, made clearer</h3>
+      <p class="small text-secondary text-center mb-3">
+        SMEs can access the service free through an accountant in Year 1.
+      </p>
+      <a class="btn btn-sm btn-outline-secondary landing-widget-link" href="{{ url_for('login') }}">Visit your workspace</a>
+    </aside>
+  </section>
+
+  <section aria-labelledby="pricing-title">
+    <div class="landing-section-header mb-3">
+      <div>
+        <p class="landing-eyebrow mb-2">Pilot pricing · 50% off for the first 5 firms in Q1</p>
+        <h2 class="landing-section-title mb-0" id="pricing-title">Plans and services</h2>
+      </div>
+      <a class="landing-section-link" href="{{ url_for('register') }}">Get started <span aria-hidden="true">→</span></a>
+    </div>
+
+    <div class="row g-3 landing-feature-grid">
+      <div class="col-md-4">
+        <article class="landing-feature-card card h-100">
+          <span class="landing-number mb-3">01</span>
+          <h3 class="h5 mb-2">Firm subscription</h3>
+          <p class="landing-price mb-2">RM800 <span>/ month</span></p>
+          <p class="text-secondary mb-0">A monthly subscription for accounting firms.</p>
+        </article>
+      </div>
+      <div class="col-md-4">
+        <article class="landing-feature-card card h-100">
+          <span class="landing-number mb-3">02</span>
+          <h3 class="h5 mb-2">Credit-readiness report</h3>
+          <p class="landing-price mb-2">RM150 <span>/ report</span></p>
+          <p class="text-secondary mb-0">A report for each completed readiness review.</p>
+        </article>
+      </div>
+      <div class="col-md-4">
+        <article class="landing-feature-card card h-100">
+          <span class="landing-number mb-3">03</span>
+          <h3 class="h5 mb-2">Premium add-on</h3>
+          <p class="landing-price mb-2">RM300 <span>/ month</span></p>
+          <p class="text-secondary mb-0">Optional premium service on a monthly basis.</p>
+        </article>
+      </div>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -13,8 +13,12 @@
       <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">{{ app_name }}</a>
       <div class="d-flex align-items-center gap-2">
         {% if g.user %}
-          <span class="text-secondary small d-none d-sm-inline">Hi, {{ g.user['username'] }}</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('dashboard') }}">Dashboard</a>
+          <span class="text-secondary small d-none d-sm-inline">Hi, {{ g.user['name'] }}</span>
+          {% if g.user['role'] == 'firm' %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('firm_dashboard') }}">Clients</a>
+          {% else %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('dashboard') }}">Dashboard</a>
+          {% endif %}
           <form method="post" action="{{ url_for('logout') }}" class="m-0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-secondary">Log out</button>
@@ -40,7 +44,7 @@
   </main>
 
   <footer class="text-center text-secondary small py-3 border-top">
-    {{ app_name }} &middot; Built by our group
+    {{ app_name }} &middot; Indicative guidance, not a lending decision
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

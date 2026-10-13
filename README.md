@@ -4,7 +4,7 @@ This kit gives your group:
 
 - ✅ **A working web app** (Python + Flask). It has accounts, a database, add/edit/delete, search, a mobile-friendly design, security built in, and 12 automatic tests.
 - ✅ **An AI prompt** (`AI_PROMPT.md`) that turns this starter into **your own app idea**.
-- ✅ **Free deployment** to **AWS**, **Render** or **PythonAnywhere**, with a one-command setup script for AWS.
+- ✅ **Free deployment** options include **Vercel + Supabase**, AWS, Render and PythonAnywhere.
 - ✅ This **A–Z guide**. Follow the letters in order and you can't get lost.
 
 > ⏱️ Time needed: about 30 min to run it, 1–3 sessions to build your idea, and about 30 min to put it online.
@@ -44,9 +44,9 @@ student-app-kit/
 **How it works, in one picture:**
 
 ```
-Browser ──► Flask (app.py) ──► SQLite database (app.db)
-   ▲              │
-   └── HTML page ◄┘  (made from templates/ + Bootstrap)
+Browser ──► Flask pages on Vercel ──► Supabase Postgres + private Storage
+   ▲                   │
+   └── HTML page ◄─────┘  (local development can use SQLite)
 ```
 
 ---
@@ -247,6 +247,29 @@ The included `.gitignore` already blocks all of these. Don't delete it.
 | **U. Docker** | Any other cloud (Railway, Fly.io, Google Cloud Run, AWS App Runner) | Depends on host | Depends on host | ★★★ |
 
 \* AWS needs a credit/debit card to sign up, and it gives new accounts free-tier usage or credits. **Free-tier rules change, so read the current terms at https://aws.amazon.com/free and set a budget alert (step R2).** If your school uses **AWS Academy** or **AWS Educate**, use that account instead. It needs no card.
+
+### Recommended: Vercel + Supabase (free plans)
+
+The Flask-rendered pages run on Vercel, while Supabase provides persistent PostgreSQL data and private document storage. Local development continues to use SQLite and local uploads unless the Supabase environment variables are set.
+
+1. Create a Supabase project and a Vercel account. In Supabase, create a **private** Storage bucket named `creditready-documents` (or choose another name and set it below).
+2. In Supabase **Project Settings → Database**, copy a PostgreSQL connection string that works from serverless hosting. Prefer the Supavisor session pooler string if direct database connectivity is unavailable. Keep its password private.
+3. In Supabase **Project Settings → API**, copy the project URL and the `service_role` secret. This key bypasses Storage policies; keep it only in server-side environment variables.
+4. Import this Git repository into Vercel. Vercel detects the Python function in `api/index.py`; `vercel.json` routes the app pages to Flask.
+5. In Vercel **Project Settings → Environment Variables**, set:
+
+   | Variable | Value |
+   |---|---|
+   | `SECRET_KEY` | A long random secret unique to the deployment |
+   | `DATABASE_URL` | Supabase PostgreSQL connection string |
+   | `SUPABASE_URL` | Supabase project URL |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Supabase server-only service role secret |
+   | `SUPABASE_STORAGE_BUCKET` | `creditready-documents` (or your private bucket name) |
+   | `APP_NAME` | Name displayed by the app (optional) |
+
+6. Redeploy after saving the environment variables. The app creates its required tables when the function starts. Check `/health` after deployment.
+
+Vercel functions are stateless, so this deployment uses Supabase instead of local SQLite and local files. The app limits uploads to 4 MB on Vercel to fit serverless request-body limits; local uploads remain limited to 10 MB. Existing `app.db` contents and local uploads are **not** copied to Supabase automatically. Free-plan quotas, availability, and inactivity policies can change, so check both providers' current terms before relying on the deployment for production data.
 
 ## R. Deploy on AWS EC2 (step by step)
 
